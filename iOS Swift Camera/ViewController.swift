@@ -72,6 +72,8 @@ extension ViewController: CapturePhotoDelegate {
         let destinationPath = documentsURL.URLByAppendingPathComponent(NSUUID().UUIDString + ".png").path!
         UIImageJPEGRepresentation(img, 1.0)!.writeToFile(destinationPath, atomically: true)
         
+        thumbnails = self.pathsForAllImages()
+        collectionView.reloadData()
     }
     
 }
