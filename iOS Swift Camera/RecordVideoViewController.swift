@@ -10,211 +10,235 @@ import UIKit
 import AVFoundation
 
 class RecordVideoViewController: UIViewController {
+  
+  var movieFileOutput:AVCaptureMovieFileOutput? = nil
+  var isRecording = false
+  var elapsedTime = 0.0
+  var elapsedTimer:NSTimer? = nil
+  var fileName:String? = nil
+  
+  @IBOutlet weak var videoPreviewView: UIView!
+  @IBOutlet weak var btnStartRecording: UIButton!
+  @IBOutlet weak var elapsedTimeLabel: UILabel!
+  
+  var session: AVCaptureSession? = nil
+  var previewLayer: AVCaptureVideoPreviewLayer? = nil
+  
+  let documentsURL = NSFileManager.defaultManager().URLsForDirectory(.DocumentDirectory, inDomains: .UserDomainMask)[0]
+  
+  let maxSecondsForVideo = 15.0
+  let captureFramesPerSecond = 30.0
+  
+  override func viewDidLoad() {
+    super.viewDidLoad()
     
-    var movieFileOutput:AVCaptureMovieFileOutput? = nil
-    var isRecording = false
-    var elapsedTime = 0.0
-    var elapsedTimer:NSTimer? = nil
+    let device = AVCaptureDevice.defaultDeviceWithMediaType(AVMediaTypeVideo)
     
-    @IBOutlet weak var videoPreviewView: UIView!
-    @IBOutlet weak var btnStartRecording: UIButton!
-    @IBOutlet weak var elapsedTimeLabel: UILabel!
-
-    var session: AVCaptureSession? = nil
-    var previewLayer: AVCaptureVideoPreviewLayer? = nil
-    
-    let documentsURL = NSFileManager.defaultManager().URLsForDirectory(.DocumentDirectory, inDomains: .UserDomainMask)[0]
-    
-    let maxSecondsForVideo = 15.0
-    let captureFramesPerSecond = 30.0
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        
-        let device = AVCaptureDevice.defaultDeviceWithMediaType(AVMediaTypeVideo)
-        
-        if device != nil {
-            self.setupRecording()
-        }
+    if device != nil {
+      self.setupRecording()
+    }
+  }
+  
+  func setupRecording () {
+    if session != nil {
+      session!.stopRunning()
+      session = nil
     }
     
-    func setupRecording () {
-        if session != nil {
-            session!.stopRunning()
-            session = nil
-        }
-        
-        btnStartRecording.setImage(UIImage(named: "ButtonRecord"), forState: UIControlState.Normal)
-        
-        isRecording = false
-        self.setupCaptureSession()
-        elapsedTime = -0.5
-        self.updateElapsedTime()
-        
+    btnStartRecording.setImage(UIImage(named: "ButtonRecord"), forState: UIControlState.Normal)
+    
+    isRecording = false
+    self.setupCaptureSession()
+    elapsedTime = -0.5
+    self.updateElapsedTime()
+    
+  }
+  
+  func setupCaptureSession () {
+    
+    session = AVCaptureSession()
+    session?.sessionPreset = AVCaptureSessionPresetMedium
+    
+    let device = AVCaptureDevice.defaultDeviceWithMediaType(AVMediaTypeVideo)
+    
+    do {
+      let input = try AVCaptureDeviceInput(device: device)
+      
+      session?.addInput(input)
+      
+    } catch {
+      print ("video initialization error")
     }
     
-    func setupCaptureSession () {
-        
-        session = AVCaptureSession()
-        session?.sessionPreset = AVCaptureSessionPresetMedium
-        
-        let device = AVCaptureDevice.defaultDeviceWithMediaType(AVMediaTypeVideo)
-        
+    AVAudioSession.sharedInstance().requestRecordPermission { (granted: Bool) -> Void in
+      if granted {
+        let audioCaptureDevice = AVCaptureDevice.defaultDeviceWithMediaType(AVMediaTypeAudio)
         do {
-            let input = try AVCaptureDeviceInput(device: device)
-            
-            session?.addInput(input)
-            
+          let audioInput = try AVCaptureDeviceInput(device: audioCaptureDevice)
+          self.session?.addInput(audioInput)
         } catch {
-            print ("video initialization error")
+          print ("audio initialization error")
         }
-        
-        AVAudioSession.sharedInstance().requestRecordPermission { (granted: Bool) -> Void in
-            if granted {
-                let audioCaptureDevice = AVCaptureDevice.defaultDeviceWithMediaType(AVMediaTypeAudio)
-                do {
-                    let audioInput = try AVCaptureDeviceInput(device: audioCaptureDevice)
-                    self.session?.addInput(audioInput)
-                } catch {
-                    print ("audio initialization error")
-                }
-            }
-        }
-        
-        let queue = dispatch_queue_create("videoCaptureQueue", nil)
-        
-        let output = AVCaptureVideoDataOutput ()
-        output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as NSObject:kCVPixelFormatType_32BGRA as! AnyObject]
-        output.setSampleBufferDelegate(self, queue: queue)
-        session?.addOutput(output)
-        
-        previewLayer = AVCaptureVideoPreviewLayer (session: session)
-        previewLayer?.videoGravity = AVLayerVideoGravityResizeAspectFill
-        previewLayer?.frame = CGRectMake(0, 0, videoPreviewView.frame.size.width, videoPreviewView.frame.size.height)
-        
-        UIDevice.currentDevice().beginGeneratingDeviceOrientationNotifications()
-        let currentOrientation = UIDevice.currentDevice().orientation
-        UIDevice.currentDevice().endGeneratingDeviceOrientationNotifications()
-        
-        if currentOrientation == UIDeviceOrientation.LandscapeLeft {
-            previewLayer?.connection.videoOrientation = AVCaptureVideoOrientation.LandscapeRight
-        } else {
-            previewLayer?.connection.videoOrientation = AVCaptureVideoOrientation.LandscapeLeft
-        }
-        
-        videoPreviewView.layer.addSublayer(previewLayer!)
-        
-        movieFileOutput = AVCaptureMovieFileOutput()
-        
-        let maxDuration = CMTimeMakeWithSeconds(maxSecondsForVideo, Int32(captureFramesPerSecond))
-        movieFileOutput?.maxRecordedDuration = maxDuration
-        
-        movieFileOutput?.minFreeDiskSpaceLimit = 1024 * 1024
-        
-        if (session?.canAddOutput(movieFileOutput) != nil) {
-            session?.addOutput(movieFileOutput)
-        }
-        
-        var videoConnection:AVCaptureConnection? = nil
-        for connection in (movieFileOutput?.connections)! {
-            for port in connection.inputPorts! {
-                if port.mediaType == AVMediaTypeVideo {
-                    videoConnection = connection as? AVCaptureConnection
-                    break
-                }
-            }
-            if videoConnection != nil {
-                break
-            }
-        }
-        
-        videoConnection?.videoOrientation = AVCaptureVideoOrientation (ui: currentOrientation)
-        
-        if (session?.canSetSessionPreset(AVCaptureSessionPreset640x480) != nil) {
-            session?.sessionPreset = AVCaptureSessionPreset640x480
-        }
-        
-        session?.startRunning()
-        
+      }
     }
     
-    func updateElapsedTime () {
-        elapsedTime += 0.5
-        let elapsedFromMax = maxSecondsForVideo - elapsedTime
-        elapsedTimeLabel.text = "00:" + String(format: "%02d", Int(round(elapsedFromMax)))
-        
-        if elapsedTime >= maxSecondsForVideo {
-            isRecording = true
-            self.recordVideo(self.btnStartRecording)
-        }
-        
+    let queue = dispatch_queue_create("videoCaptureQueue", nil)
+    
+    let output = AVCaptureVideoDataOutput ()
+    output.videoSettings = [kCVPixelBufferPixelFormatTypeKey : Int(kCVPixelFormatType_32BGRA)]
+    output.setSampleBufferDelegate(self, queue: queue)
+    session?.addOutput(output)
+    
+    previewLayer = AVCaptureVideoPreviewLayer (session: session)
+    previewLayer?.videoGravity = AVLayerVideoGravityResizeAspectFill
+    previewLayer?.frame = CGRectMake(0, 0, videoPreviewView.frame.size.width, videoPreviewView.frame.size.height)
+    
+    UIDevice.currentDevice().beginGeneratingDeviceOrientationNotifications()
+    let currentOrientation = UIDevice.currentDevice().orientation
+    UIDevice.currentDevice().endGeneratingDeviceOrientationNotifications()
+    
+    if currentOrientation == UIDeviceOrientation.LandscapeLeft {
+      previewLayer?.connection.videoOrientation = AVCaptureVideoOrientation.LandscapeRight
+    } else {
+      previewLayer?.connection.videoOrientation = AVCaptureVideoOrientation.LandscapeLeft
     }
     
+    videoPreviewView.layer.addSublayer(previewLayer!)
     
-    @IBAction func recordVideo (btn : UIButton) {
-        
-        if !isRecording {
-            isRecording = true
-            
-            elapsedTimer = NSTimer.scheduledTimerWithTimeInterval(0.5, target: self, selector: Selector("updateElapsedTime"), userInfo: nil, repeats: true)
-            
-            btn.setImage(UIImage (named: "ButtonStop"), forState: UIControlState.Normal)
-            
-            let path = documentsURL.path! + NSUUID ().UUIDString + ".mp4"
-            let outputURL = NSURL(fileURLWithPath: path)
-            
-            movieFileOutput?.startRecordingToOutputFileURL(outputURL, recordingDelegate: self)
-            
-        } else {
-            isRecording = false
-            
-            elapsedTimer?.invalidate()
-            movieFileOutput?.stopRecording()
-            
-            self.dismissViewControllerAnimated(true, completion: nil)
-            
-        }
-        
+    movieFileOutput = AVCaptureMovieFileOutput()
+    
+    let maxDuration = CMTimeMakeWithSeconds(maxSecondsForVideo, Int32(captureFramesPerSecond))
+    movieFileOutput?.maxRecordedDuration = maxDuration
+    
+    movieFileOutput?.minFreeDiskSpaceLimit = 1024 * 1024
+    
+    if (session?.canAddOutput(movieFileOutput) != nil) {
+      session?.addOutput(movieFileOutput)
     }
     
-    override func didRotateFromInterfaceOrientation(fromInterfaceOrientation: UIInterfaceOrientation) {
-        if fromInterfaceOrientation == UIInterfaceOrientation.LandscapeLeft {
-            previewLayer?.connection.videoOrientation = AVCaptureVideoOrientation.LandscapeRight
-        } else {
-            previewLayer?.connection.videoOrientation = AVCaptureVideoOrientation.LandscapeLeft
+    var videoConnection:AVCaptureConnection? = nil
+    for connection in (movieFileOutput?.connections)! {
+      for port in connection.inputPorts! {
+        if port.mediaType == AVMediaTypeVideo {
+          videoConnection = connection as? AVCaptureConnection
+          break
         }
-        
+      }
+      if videoConnection != nil {
+        break
+      }
     }
-
+    
+    videoConnection?.videoOrientation = AVCaptureVideoOrientation (ui: currentOrientation)
+    
+    if (session?.canSetSessionPreset(AVCaptureSessionPreset640x480) != nil) {
+      session?.sessionPreset = AVCaptureSessionPreset640x480
+    }
+    
+    session?.startRunning()
+    
+  }
+  
+  func updateElapsedTime () {
+    elapsedTime += 0.5
+    let elapsedFromMax = maxSecondsForVideo - elapsedTime
+    elapsedTimeLabel.text = "00:" + String(format: "%02d", Int(round(elapsedFromMax)))
+    
+    if elapsedTime >= maxSecondsForVideo {
+      isRecording = true
+      self.recordVideo(self.btnStartRecording)
+    }
+    
+  }
+  
+  func generateThumbnailFromVideo () {
+    let videoURL = NSURL(fileURLWithPath: (documentsURL.path! + "/" + fileName! + ".mp4"))
+    let thumbnailPath = documentsURL.path! + "/" + fileName! + ".jpg"
+    
+    let asset = AVAsset(URL: videoURL)
+    let imageGenerator = AVAssetImageGenerator(asset: asset)
+    imageGenerator.appliesPreferredTrackTransform = true
+    
+    let time = CMTimeMake(2, 1)
+    
+    do {
+      let imageRef = try imageGenerator.copyCGImageAtTime(time, actualTime: nil)
+      let videoThumb = UIImage(CGImage: imageRef)
+      let imgData = UIImageJPEGRepresentation(videoThumb, 0.8)
+      
+      NSFileManager.defaultManager().createFileAtPath(thumbnailPath, contents: imgData, attributes: nil)
+    } catch let error as NSError {
+      print("Image generation failed with error \(error)")
+    }
+  }
+  
+  @IBAction func recordVideo (btn : UIButton) {
+    
+    if !isRecording {
+      isRecording = true
+      
+      elapsedTimer = NSTimer.scheduledTimerWithTimeInterval(0.5, target: self, selector: Selector("updateElapsedTime"), userInfo: nil, repeats: true)
+      
+      btn.setImage(UIImage (named: "ButtonStop"), forState: UIControlState.Normal)
+      
+      fileName = NSUUID ().UUIDString
+      let path = documentsURL.path! + "/" + fileName! + ".mp4"
+      let outputURL = NSURL(fileURLWithPath: path)
+      
+      movieFileOutput?.startRecordingToOutputFileURL(outputURL, recordingDelegate: self)
+      
+    } else {
+      isRecording = false
+      
+      elapsedTimer?.invalidate()
+      movieFileOutput?.stopRecording()
+      
+    }
+    
+  }
+  
+  override func didRotateFromInterfaceOrientation(fromInterfaceOrientation: UIInterfaceOrientation) {
+    if fromInterfaceOrientation == UIInterfaceOrientation.LandscapeLeft {
+      previewLayer?.connection.videoOrientation = AVCaptureVideoOrientation.LandscapeRight
+    } else {
+      previewLayer?.connection.videoOrientation = AVCaptureVideoOrientation.LandscapeLeft
+    }
+    
+  }
+  
 }
 
 extension AVCaptureVideoOrientation {
-    var uiInterfaceOrientation: UIDeviceOrientation {
-        get {
-            switch self {
-            case .LandscapeLeft:        return .LandscapeLeft
-            case .LandscapeRight:       return .LandscapeRight
-            case .Portrait:             return .Portrait
-            case .PortraitUpsideDown:   return .PortraitUpsideDown
-            }
-        }
+  var uiInterfaceOrientation: UIDeviceOrientation {
+    get {
+      switch self {
+      case .LandscapeLeft:        return .LandscapeLeft
+      case .LandscapeRight:       return .LandscapeRight
+      case .Portrait:             return .Portrait
+      case .PortraitUpsideDown:   return .PortraitUpsideDown
+      }
     }
-    
-    init(ui:UIDeviceOrientation) {
-        switch ui {
-        case .LandscapeRight:       self = .LandscapeRight
-        case .LandscapeLeft:        self = .LandscapeLeft
-        case .Portrait:             self = .Portrait
-        case .PortraitUpsideDown:   self = .PortraitUpsideDown
-        default:                    self = .Portrait
-        }
+  }
+  
+  init(ui:UIDeviceOrientation) {
+    switch ui {
+    case .LandscapeRight:       self = .LandscapeRight
+    case .LandscapeLeft:        self = .LandscapeLeft
+    case .Portrait:             self = .Portrait
+    case .PortraitUpsideDown:   self = .PortraitUpsideDown
+    default:                    self = .Portrait
     }
+  }
 }
 
 extension RecordVideoViewController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureFileOutputRecordingDelegate {
-
-    func captureOutput(captureOutput: AVCaptureFileOutput!, didFinishRecordingToOutputFileAtURL outputFileURL: NSURL!, fromConnections connections: [AnyObject]!, error: NSError!) {
-        print ("Recorded Successfully")
-    }
-
+  
+  func captureOutput(captureOutput: AVCaptureFileOutput!, didFinishRecordingToOutputFileAtURL outputFileURL: NSURL!, fromConnections connections: [AnyObject]!, error: NSError!) {
+    print (outputFileURL);
+    
+    self.generateThumbnailFromVideo()
+    
+    self.dismissViewControllerAnimated(true, completion: nil)
+  }
+  
 }
